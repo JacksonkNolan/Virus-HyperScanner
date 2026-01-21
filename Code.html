@@ -279,10 +279,7 @@ Critical error: nimda_worm active.</textarea>
         class DFA extends FiniteAutomaton {
             constructor() { super(); this.deadStateName = null; }
             
-            // Returns TRUE if the DFA accepts any substring of the input (Simulated)
-            // Note: Standard DFA scans whole string. For substring matching in this tool,
-            // we usually iterate start positions or use a compiled ".*pattern" DFA.
-            // For Hyperscan logic, we use this to verify a specific window.
+
             scan(input) {
                 let curr = this.startState;
                 if (!curr) return false;
@@ -502,13 +499,13 @@ Critical error: nimda_worm active.</textarea>
         // --- 5. THE HYPERSCAN ENGINE ---
         class HyperscanEngine {
             constructor() {
-                this.anchored = []; // { anchor: string, dfa: DFA }
-                this.fallback = null; // DFA
-                this.visual = null;   // DFA (for UI only)
+                this.anchored = [];
+                this.fallback = null; 
+                this.visual = null;  
             }
 
             extractAnchor(regex) {
-                // Heuristic: Find longest run of literal characters
+                
                 const clean = regex.replace(/[\(\)\*\+\?\|\[\]]/g, '\0').split('\0');
                 let max = '';
                 for(const s of clean) if(s.length > max.length) max = s;
@@ -530,7 +527,7 @@ Critical error: nimda_worm active.</textarea>
                     }
                 });
 
-                // Build Fallback (Union of all complex)
+ 
                 if (complex.length) {
                     let n = new NFA(); const s = getNewStateName(); n.setStartState(s);
                     complex.forEach(r => {
@@ -543,7 +540,7 @@ Critical error: nimda_worm active.</textarea>
                     this.fallback = minimize(toDFA(n));
                 }
 
-                // Build Visual (Union of ALL)
+               
                 let vn = new NFA(); const vs = getNewStateName(); vn.setStartState(vs);
                 regexList.forEach(r => {
                     const sub = parseRegex(r, syms);
@@ -559,9 +556,6 @@ Critical error: nimda_worm active.</textarea>
                 // 1. Anchored Checks (Fast Path)
                 for (const item of this.anchored) {
                     if (line.indexOf(item.anchor) !== -1) {
-                        // Anchor found! Verify with full DFA for this pattern
-                        // For simplicity in this demo, if anchor matches, we verify the specific DFA against the line.
-                        // Ideally we check a window around the anchor.
                         if (this.verifyDFA(line, item.dfa)) return true; 
                     }
                 }
@@ -575,8 +569,7 @@ Critical error: nimda_worm active.</textarea>
 
             // Checks if 'dfa' accepts any substring of 'line'
             verifyDFA(line, dfa) {
-                // Brute force substring check using the DFA (O(n*m))
-                // This is the "Verification" stage triggered only when necessary
+           
                 for(let i=0; i<line.length; i++) {
                     let curr = dfa.startState;
                     for(let j=i; j<line.length; j++) {
