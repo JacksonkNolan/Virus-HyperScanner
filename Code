@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hyperscan-Lite Virus Scanner</title>
+    
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    
+    <style>
+        /* --- Global Styles --- */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        h2 {
+            color: #34495e;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
+            margin-top: 0;
+            font-size: 1.2em;
+        }
+
+        /* --- Layout Structure --- */
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .left-panel {
+            flex: 1;
+            min-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .right-panel {
+            flex: 2;
+            min-width: 500px;
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- Card Styles --- */
+        .card {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        /* --- Input Elements --- */
+        textarea {
+            width: 100%;
+            box-sizing: border-box;
+            min-height: 120px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 14px;
+            margin-bottom: 15px;
+            resize: vertical;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            font-weight: bold;
+            color: #ffffff;
+            background-color: #e74c3c; /* Red for Virus Scanner */
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .btn:hover {
+            background-color: #c0392b;
+        }
+        
+        .btn-blue {
+            background-color: #3498db;
+        }
+        .btn-blue:hover {
+             background-color: #2980b9;
+        }
+
+        /* --- Scan Results Box --- */
+        #log-output {
+            background-color: #2c3e50; /* Dark Terminal Look */
+            color: #ecf0f1;
+            border: 1px solid #34495e;
+            border-radius: 4px;
+            padding: 10px;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', Courier, monospace;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .match {
+            background-color: #e74c3c;
+            color: white;
+            font-weight: bold;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        
+        .stats {
+            font-size: 0.85em;
+            color: #7f8c8d;
+            margin-top: 5px;
+            text-align: right;
+        }
+
+        /* --- Graph Visualization --- */
+        #dfa-graph {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            background: #fafafa;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Hyperscan-Lite Virus Scanner</h1>
+    <div class="subtitle">High-performance regex matching using Anchor Decomposition & Multi-Pattern Automata</div>
+
+    <div class="container">
+        <div class="left-panel">
+
+            <div class="card">
+                <h2>1. Virus Signatures (RegEx)</h2>
+                <p style="font-size:0.8em; color:#666; margin-top:-5px;">Engine will automatically extract fast "anchors".</p>
+                <textarea id="regex-input" placeholder="Enter virus signatures (one per line)...">code_red
+nimda_worm
+malware[0-9]+
+trojan_(a|b)</textarea>
+                <button id="update-dfa-button" class="btn btn-blue">Compile Engine</button>
+                <div id="compile-stats" class="stats"></div>
+            </div>
+
+            <div class="card">
+                <h2>2. System Log / File Content</h2>
+                <textarea id="log-input" placeholder="Paste log data here...">System started.
+No threats found.
+Detected file: code_red.exe in /tmp
+User downloaded malware555 yesterday.
+Safe file: trojan_horse.jpg (false positive check)
+Critical error: nimda_worm active.</textarea>
+                
+                <button id="scan-log-button" class="btn">Scan for Threats</button>
+            </div>
+
+            <div class="card">
+                <h2>3. Detection Output</h2>
+                <div id="log-output"></div>
+                <div id="scan-stats" class="stats"></div>
+            </div>
+
+        </div>
+
+        <div class="right-panel">
+            <h2>Combined Signature Graph</h2>
+            <div id="dfa-graph"></div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+
+        // --- 1. DOM Elements ---
+        const regexInput = document.getElementById('regex-input');
+        const updateButton = document.getElementById('update-dfa-button');
+        const logInput = document.getElementById('log-input');
+        const scanButton = document.getElementById('scan-log-button');
+        const logOutput = document.getElementById('log-output');
+        const graphContainer = document.getElementById('dfa-graph');
+        const compileStats = document.getElementById('compile-stats');
+        const scanStats = document.getElementById('scan-stats');
+        
+        let engine = null; 
+        let stateCounter = 0;
+        const getNewStateName = () => `q${stateCounter++}`;
+
+        // --- 2. Automata Classes ---
+
+        class FiniteAutomaton {
+            constructor() {
+                this.states = new Set();
+                this.alphabet = new Set();
+                this.transitions = new Map(); 
+                this.startState = null;
+                this.acceptStates = new Set();
+            }
+            addState(state) { this.states.add(state); }
+            addAlphabetSymbol(symbol) { if (symbol !== 'ε') this.alphabet.add(symbol); }
+            addTransition(from, sym, to) {
+                if (!this.transitions.has(from)) this.transitions.set(from, {});
+                this.transitions.get(from)[sym] = to;
+            }
+            setStartState(s) { this.startState = s; this.states.add(s); }
+            setAcceptState(s) { this.acceptStates.add(s); this.states.add(s); }
+        }
+
+        class NFA extends FiniteAutomaton {
+            addTransition(from, sym, toStates) {
+                const dests = Array.isArray(toStates) ? toStates : [toStates];
+                if (!this.transitions.has(from)) this.transitions.set(from, {});
+                const t = this.transitions.get(from);
+                if (!t[sym]) t[sym] = [];
+                dests.forEach(d => { if(!t[sym].includes(d)) t[sym].push(d); this.states.add(d); });
+                this.states.add(from);
+            }
+            static fromSymbol(sym) {
+                const n = new NFA(), s = getNewStateName(), a = getNewStateName();
+                n.addAlphabetSymbol(sym); n.setStartState(s); n.setAcceptState(a);
+                n.addTransition(s, sym, a); return n;
+            }
+            static concat(n1, n2) {
+                const n = new NFA(); n.alphabet = new Set([...n1.alphabet, ...n2.alphabet]);
+                [n1, n2].forEach(x => x.transitions.forEach((t, f) => Object.entries(t).forEach(([s, ts]) => n.addTransition(f, s, ts))));
+                n.setStartState(n1.startState); n.acceptStates = n2.acceptStates;
+                n1.acceptStates.forEach(s => n.addTransition(s, 'ε', n2.startState));
+                return n;
+            }
+            static union(n1, n2) {
+                const n = new NFA(), s = getNewStateName(), a = getNewStateName();
+                n.alphabet = new Set([...n1.alphabet, ...n2.alphabet]);
+                [n1, n2].forEach(x => x.transitions.forEach((t, f) => Object.entries(t).forEach(([sym, ts]) => n.addTransition(f, sym, ts))));
+                n.setStartState(s); n.setAcceptState(a);
+                n.addTransition(s, 'ε', [n1.startState, n2.startState]);
+                [n1, n2].forEach(x => x.acceptStates.forEach(as => n.addTransition(as, 'ε', a)));
+                return n;
+            }
+            static star(n1) {
+                const n = new NFA(), s = getNewStateName(), a = getNewStateName();
+                n.alphabet = n1.alphabet;
+                n1.transitions.forEach((t, f) => Object.entries(t).forEach(([sym, ts]) => n.addTransition(f, sym, ts)));
+                n.setStartState(s); n.setAcceptState(a);
+                n.addTransition(s, 'ε', [n1.startState, a]);
+                n1.acceptStates.forEach(as => n.addTransition(as, 'ε', [n1.startState, a]));
+                return n;
+            }
+        }
+
+        class DFA extends FiniteAutomaton {
+            constructor() { super(); this.deadStateName = null; }
+            
+            // Returns TRUE if the DFA accepts any substring of the input (Simulated)
+            // Note: Standard DFA scans whole string. For substring matching in this tool,
+            // we usually iterate start positions or use a compiled ".*pattern" DFA.
+            // For Hyperscan logic, we use this to verify a specific window.
+            scan(input) {
+                let curr = this.startState;
+                if (!curr) return false;
+                for (const char of input) {
+                    const t = this.transitions.get(curr);
+                    if (t && t[char]) curr = t[char];
+                    else return false;
+                }
+                return this.acceptStates.has(curr);
+            }
+
+            getVisJSData() {
+                const nodes = [], edges = [];
+                for (const s of this.states) {
+                    const node = { id: s, label: s };
+                    if (this.acceptStates.has(s)) { node.shape = 'doubleCircle'; node.color = { background: '#ff6b6b', border: '#c0392b' }; } // Red for virus match
+                    else if (s === this.deadStateName) { node.color = { background: '#bdc3c7', border: '#7f8c8d' }; node.label = "DEAD"; }
+                    nodes.push(node);
+                }
+                if (this.startState) {
+                    nodes.push({ id: 'Start', label: 'Start', shape: 'text', font: { size: 16, bold: true } });
+                    edges.push({ from: 'Start', to: this.startState, arrows: 'to', color: '#848484' });
+                }
+                for (const [f, tMap] of this.transitions) {
+                    const grouped = {};
+                    for (const [sym, t] of Object.entries(tMap)) {
+                        if (!grouped[t]) grouped[t] = [];
+                        grouped[t].push(sym);
+                    }
+                    for (const [t, syms] of Object.entries(grouped)) {
+                        edges.push({ from: f, to: t, label: syms.join(','), arrows: 'to', font: { align: 'top' } });
+                    }
+                }
+                return { nodes, edges };
+            }
+        }
+
+        // --- 3. Regex Parsing ---
+        function preprocessRegex(regex) {
+            let temp = '', inBracket = false, content = '';
+            for (const char of regex) {
+                if (char === '[') { inBracket = true; content = ''; }
+                else if (char === ']' && inBracket) {
+                    inBracket = false;
+                    temp += content.length ? `(${content.split('').join('|')})` : 'ε';
+                } else if (inBracket) content += char;
+                else temp += char;
+            }
+            if (inBracket) throw new Error("Unclosed '['");
+            
+            let res = '';
+            const isOp = c => '|*+?'.includes(c), isParen = c => '()'.includes(c), isLit = c => !isOp(c) && !isParen(c);
+            
+            for (let i = 0; i < temp.length; i++) {
+                const c = temp[i], next = temp[i+1];
+                if (c === '(' && next === ')') { res += '(ε)'; i++; if(next && (isLit(temp[i+1]) || temp[i+1]==='(')) res+='#'; continue; }
+                
+                if (next === '+') {
+                    let atom = c;
+                    if (c === ')') {
+                         // Backtrack to find matching paren (simplified)
+                         // Note: Full parsing requires recursion, this handles simple cases
+                         let bal = 1, j = res.length - 2;
+                         while(j>=0 && bal) { if(res[j]===')') bal++; if(res[j]==='(') bal--; j--; }
+                         atom = res.substring(j+1) + c; res = res.substring(0, j+1);
+                    } else if (c==='*' || isLit(c)) { atom = c; res = res.slice(0, -1); }
+                    else { res += c; continue; }
+                    res += atom + '#' + atom + '*'; i++;
+                    if(temp[i+1] && (isLit(temp[i+1]) || temp[i+1]==='(')) res+='#';
+                    continue;
+                }
+
+                res += c;
+                if (next) {
+                    const isEnd = c => isLit(c) || c===')' || c==='*';
+                    const isStart = c => isLit(c) || c==='(';
+                    if (isEnd(c) && isStart(next)) res += '#';
+                }
+            }
+            return res;
+        }
+
+        function infixToPostfix(regex) {
+            const prec = { '|': 1, '#': 2, '*': 3 }, out = [], stack = [];
+            for (const c of regex) {
+                if (!'|#*()'.includes(c)) out.push(c);
+                else if (c === '(') stack.push(c);
+                else if (c === ')') {
+                    while (stack.length && stack[stack.length-1] !== '(') out.push(stack.pop());
+                    stack.pop();
+                } else {
+                    while (stack.length && stack[stack.length-1] !== '(' && prec[stack[stack.length-1]] >= prec[c]) out.push(stack.pop());
+                    stack.push(c);
+                }
+            }
+            return out.concat(stack.reverse()).join('');
+        }
+
+        function buildNFA(postfix) {
+            const stack = [];
+            if (!postfix) return NFA.fromSymbol('ε');
+            for (const c of postfix) {
+                if (c === '*') stack.push(NFA.star(stack.pop()));
+                else if (c === '#') { const b = stack.pop(), a = stack.pop(); stack.push(NFA.concat(a, b)); }
+                else if (c === '|') { const b = stack.pop(), a = stack.pop(); stack.push(NFA.union(a, b)); }
+                else stack.push(NFA.fromSymbol(c));
+            }
+            return stack.pop();
+        }
+
+        function parseRegex(regex, symbols) {
+            stateCounter = 0;
+            const pf = infixToPostfix(preprocessRegex(regex));
+            const nfa = buildNFA(pf);
+            for(const c of regex) if(!'|*#()+[]'.includes(c)) symbols.add(c);
+            symbols.forEach(s => nfa.addAlphabetSymbol(s));
+            return nfa;
+        }
+
+        // --- 4. NFA->DFA & Minimization ---
+        function epsilonClosure(nfa, states) {
+            const out = new Set(states), stack = [...states];
+            while(stack.length) {
+                const t = nfa.transitions.get(stack.pop());
+                if(t && t['ε']) t['ε'].forEach(n => { if(!out.has(n)) { out.add(n); stack.push(n); }});
+            }
+            return out;
+        }
+
+        function toDFA(nfa) {
+            const dfa = new DFA(); nfa.alphabet.forEach(s => dfa.addAlphabetSymbol(s));
+            const sKey = s => [...s].sort().join(',');
+            const map = new Map(), q = [], processed = new Map();
+            let id = 0;
+
+            const start = epsilonClosure(nfa, [nfa.startState]);
+            const startName = "S" + id++;
+            dfa.setStartState(startName);
+            map.set(startName, start); processed.set(sKey(start), startName); q.push(start);
+
+            while(q.length) {
+                const curr = q.shift(), currName = processed.get(sKey(curr));
+                for(const sym of dfa.alphabet) {
+                    const move = new Set();
+                    curr.forEach(ns => { 
+                        const t = nfa.transitions.get(ns); 
+                        if(t && t[sym]) t[sym].forEach(d => move.add(d)); 
+                    });
+                    const next = epsilonClosure(nfa, move);
+                    if(!next.size) continue; // Skip dead states in simplified view
+                    
+                    const nextKey = sKey(next);
+                    let nextName = processed.get(nextKey);
+                    if(!nextName) {
+                        nextName = "S" + id++;
+                        dfa.addState(nextName);
+                        map.set(nextName, next); processed.set(nextKey, nextName); q.push(next);
+                    }
+                    dfa.addTransition(currName, sym, nextName);
+                }
+            }
+            map.forEach((set, name) => { for(const as of nfa.acceptStates) if(set.has(as)) { dfa.setAcceptState(name); break; } });
+            return dfa;
+        }
+
+        function minimize(dfa) {
+            // Simplified minimization (Hopcroft-like or Table Filling)
+            const states = [...dfa.states], n = states.length;
+            if(!n) return dfa;
+            const sMap = new Map(states.map((s,i) => [s,i]));
+            const dist = Array(n).fill(0).map(()=>Array(n).fill(false));
+            
+            for(let i=0; i<n; i++) for(let j=0; j<i; j++) 
+                if(dfa.acceptStates.has(states[i]) !== dfa.acceptStates.has(states[j])) dist[i][j] = true;
+            
+            let change = true;
+            while(change) {
+                change = false;
+                for(let i=0; i<n; i++) for(let j=0; j<i; j++) {
+                    if(!dist[i][j]) {
+                        for(const s of dfa.alphabet) {
+                            const t1 = (dfa.transitions.get(states[i])||{})[s];
+                            const t2 = (dfa.transitions.get(states[j])||{})[s];
+                            if(t1 && t2 && t1!==t2) {
+                                const [u,v] = [sMap.get(t1), sMap.get(t2)].sort((a,b)=>b-a);
+                                if(dist[u][v]) { dist[i][j] = true; change = true; break; }
+                            } else if ((t1 && !t2) || (!t1 && t2)) { dist[i][j] = true; change = true; break; }
+                        }
+                    }
+                }
+            }
+            
+            const part = new Map(); let pId = 0;
+            for(let i=0; i<n; i++) {
+                if(!part.has(states[i])) {
+                    part.set(states[i], pId);
+                    for(let j=i+1; j<n; j++) if(!dist[j][i]) part.set(states[j], pId);
+                    pId++;
+                }
+            }
+
+            const minDfa = new DFA(); minDfa.alphabet = dfa.alphabet;
+            const newName = s => "M" + part.get(s);
+            states.forEach(s => {
+                const n = newName(s);
+                minDfa.addState(n);
+                if(s === dfa.startState) minDfa.setStartState(n);
+                if(dfa.acceptStates.has(s)) minDfa.setAcceptState(n);
+            });
+            states.forEach(s => {
+                const t = dfa.transitions.get(s);
+                if(t) Object.entries(t).forEach(([sym, dest]) => minDfa.addTransition(newName(s), sym, newName(dest)));
+            });
+            return minDfa;
+        }
+
+        // --- 5. THE HYPERSCAN ENGINE ---
+        class HyperscanEngine {
+            constructor() {
+                this.anchored = []; // { anchor: string, dfa: DFA }
+                this.fallback = null; // DFA
+                this.visual = null;   // DFA (for UI only)
+            }
+
+            extractAnchor(regex) {
+                // Heuristic: Find longest run of literal characters
+                const clean = regex.replace(/[\(\)\*\+\?\|\[\]]/g, '\0').split('\0');
+                let max = '';
+                for(const s of clean) if(s.length > max.length) max = s;
+                return max.length >= 3 ? max : null; // Require at least 3 chars to be worth indexing
+            }
+
+            compile(regexList) {
+                const complex = [], syms = new Set();
+                
+                regexList.forEach(r => {
+                    const anchor = this.extractAnchor(r);
+                    const nfa = parseRegex(r, syms);
+                    const dfa = minimize(toDFA(nfa));
+                    
+                    if (anchor) {
+                        this.anchored.push({ anchor, dfa, raw: r });
+                    } else {
+                        complex.push(r);
+                    }
+                });
+
+                // Build Fallback (Union of all complex)
+                if (complex.length) {
+                    let n = new NFA(); const s = getNewStateName(); n.setStartState(s);
+                    complex.forEach(r => {
+                        const sub = parseRegex(r, syms);
+                        sub.transitions.forEach((t, f) => Object.entries(t).forEach(([x, y]) => n.addTransition(f, x, y)));
+                        n.addTransition(s, 'ε', sub.startState);
+                        sub.acceptStates.forEach(as => n.setAcceptState(as));
+                    });
+                    syms.forEach(x => n.addAlphabetSymbol(x));
+                    this.fallback = minimize(toDFA(n));
+                }
+
+                // Build Visual (Union of ALL)
+                let vn = new NFA(); const vs = getNewStateName(); vn.setStartState(vs);
+                regexList.forEach(r => {
+                    const sub = parseRegex(r, syms);
+                    sub.transitions.forEach((t, f) => Object.entries(t).forEach(([x, y]) => vn.addTransition(f, x, y)));
+                    vn.addTransition(vs, 'ε', sub.startState);
+                    sub.acceptStates.forEach(as => vn.setAcceptState(as));
+                });
+                syms.forEach(x => vn.addAlphabetSymbol(x));
+                this.visual = minimize(toDFA(vn));
+            }
+
+            scanLine(line) {
+                // 1. Anchored Checks (Fast Path)
+                for (const item of this.anchored) {
+                    if (line.indexOf(item.anchor) !== -1) {
+                        // Anchor found! Verify with full DFA for this pattern
+                        // For simplicity in this demo, if anchor matches, we verify the specific DFA against the line.
+                        // Ideally we check a window around the anchor.
+                        if (this.verifyDFA(line, item.dfa)) return true; 
+                    }
+                }
+                
+                // 2. Fallback Check (Slow Path)
+                if (this.fallback) {
+                    if (this.verifyDFA(line, this.fallback)) return true;
+                }
+                return false;
+            }
+
+            // Checks if 'dfa' accepts any substring of 'line'
+            verifyDFA(line, dfa) {
+                // Brute force substring check using the DFA (O(n*m))
+                // This is the "Verification" stage triggered only when necessary
+                for(let i=0; i<line.length; i++) {
+                    let curr = dfa.startState;
+                    for(let j=i; j<line.length; j++) {
+                        const t = dfa.transitions.get(curr);
+                        if(t && t[line[j]]) {
+                            curr = t[line[j]];
+                            if(dfa.acceptStates.has(curr)) return true;
+                        } else break;
+                    }
+                }
+                return false;
+            }
+        }
+
+        // --- 6. Interaction Logic ---
+
+        function updateGraph() {
+            const raw = regexInput.value.split('\n').map(s=>s.trim()).filter(s=>s);
+            if(!raw.length) { engine = null; drawGraph(null); return; }
+
+            const t0 = performance.now();
+            try {
+                engine = new HyperscanEngine();
+                engine.compile(raw);
+                drawGraph(engine.visual);
+                
+                const t1 = performance.now();
+                compileStats.textContent = `Compiled in ${(t1-t0).toFixed(1)}ms. Anchored: ${engine.anchored.length}, Complex: ${engine.fallback ? 'Yes' : 'No'}`;
+            } catch(e) {
+                alert("Error: " + e.message);
+            }
+        }
+
+        function scan() {
+            if(!engine) return alert("Compile engine first.");
+            const lines = logInput.value.split('\n');
+            let out = '';
+            
+            const t0 = performance.now();
+            lines.forEach(line => {
+                if(!line.trim()) { out += '<span>(empty)</span>\n'; return; }
+                const safe = line.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                
+                if (engine.scanLine(line)) {
+                    out += `<span class="match">[VIRUS DETECTED] ${safe}</span>\n`;
+                } else {
+                    out += `<span>${safe}</span>\n`;
+                }
+            });
+            const t1 = performance.now();
+            scanStats.textContent = `Scanned ${lines.length} lines in ${(t1-t0).toFixed(2)}ms`;
+            logOutput.innerHTML = out;
+        }
+
+        function drawGraph(dfa) {
+            if(!dfa) { 
+                if(graphContainer.net) { graphContainer.net.destroy(); graphContainer.net=null; }
+                graphContainer.innerHTML = ''; return;
+            }
+            const data = dfa.getVisJSData();
+            const opts = {
+                physics: { stabilization: { iterations: 200 } },
+                edges: { smooth: { type: 'dynamic' } }
+            };
+            graphContainer.net = new vis.Network(graphContainer, data, opts);
+        }
+
+        updateButton.onclick = updateGraph;
+        scanButton.onclick = scan;
+        
+        // Initial build
+        updateGraph();
+    });
+    </script>
+</body>
+</html>
